@@ -30,7 +30,7 @@ Reverse proxy files can be found at `reverse-proxy` directory.
 Let us run a COAP (without TLS) reverse proxy at default port UDP 5683:
 
 ```zsh
-coap-http-reverseproxy http://127.0.0.1
+coap-http-reverseproxy http://127.0.0.1:3000
 ```
 
 Now, let us also run our reverse proxy using COAPS with DTLS authenticated with pre-shared keys (PSK). The PSKs are in the `psk.txt` file with one client per line with format `id:secret`.
@@ -43,6 +43,7 @@ bob:EiAT3eboMqOa0ddtwsiX57JUBnw08ClON7wLR7n8N2M=
 Excute the COAPS reverse proxy with:
 
 ```console
+coap-http-reverseproxy --dtls psk --psk-file psk.txt http://127.0.0.1:3000
 ```
 
 ## Test

@@ -33,11 +33,11 @@ Let us run a COAP (without TLS) reverse proxy at default port UDP 5683:
 coap-http-reverseproxy http://127.0.0.1:3000
 ```
 
-Now, let us also run our reverse proxy using COAPS with DTLS authenticated with pre-shared keys (PSK). The PSKs are in the `psk.txt` file with one client per line with format `id:secret`.
+Now, let us also run our reverse proxy using COAPS with DTLS authenticated with pre-shared keys (PSK). The PSKs are in the `psk.txt` file with one client per line with format `id:secret:encoding`, where `encoding` can be `utf8`, `base64`, or `hex`.
 
 ```text
-alice:9yPztDNbbBkV41JIhL833lfXX+zyBfPaD8VLCK0C88w=
-bob:EiAT3eboMqOa0ddtwsiX57JUBnw08ClON7wLR7n8N2M=
+alice:9yPztDNbbBkV41JIhL833lfXX+zyBfPaD8VLCK0C88w=:base64
+bob:EiAT3eboMqOa0ddtwsiX57JUBnw08ClON7wLR7n8N2M=:base64
 ```
 
 Excute the COAPS reverse proxy with:

@@ -2,6 +2,7 @@
 #include <arpa/inet.h>
 #include <curl/curl.h>
 #include <errno.h>
+#include <ctype.h>
 #include <ifaddrs.h>
 #include <net/if.h>
 #include <stdint.h>
@@ -11,12 +12,14 @@
 
 #define MAX_CLIENTS 100
 #define MAX_STR_LEN 128
+#define MAX_KEY_LEN 256
 #define MAX_PATH_LEN 512
 #define MAX_RESPONSE_SIZE (1024 * 1024)
 
 typedef struct {
   char identity[MAX_STR_LEN];
-  char key[MAX_STR_LEN];
+  uint8_t key[MAX_KEY_LEN];
+  size_t key_len;
   coap_bin_const_t key_bin;
 } psk_client_t;
 
@@ -45,6 +48,8 @@ typedef struct {
 } proxy_config_t;
 
 static int parse_port(const char *s, uint16_t *out_port);
+static int parse_psk_line(const char *line, psk_client_t *out_client,
+                          char *err, size_t err_len);
 #ifndef UNIT_TEST
 static psk_client_t clients[MAX_CLIENTS];
 static size_t client_count = 0;
@@ -69,7 +74,7 @@ static void print_usage(const char *progname) {
           "  --help              Show this help message and exit\n"
           "  --http-url <url>    HTTP backend base URL (default: http://localhost:3000). It can be also specified as a positional argument.\n"
           "  --dtls psk|pki      Enable DTLS; omit for plain CoAP\n"
-          "  --psk-file <path>   PSK file; required when --dtls psk\n"
+          "  --psk-file <path>   PSK file; required when --dtls psk. One entry per line: id:secret:encoding (encoding: utf8|base64|hex)\n"
           "  --cert <path>       Server certificate PEM; required when --dtls pki\n"
           "  --key <path>        Server private key PEM; required when --dtls pki\n"
           "  --ca <path>         CA certificate PEM (optional, --dtls pki)\n"
@@ -94,6 +99,246 @@ static int parse_port(const char *s, uint16_t *out_port) {
   }
 
   *out_port = (uint16_t)v;
+  return 1;
+}
+
+static void trim_in_place(char *s) {
+  size_t len;
+  size_t start = 0;
+
+  if (!s) {
+    return;
+  }
+
+  len = strlen(s);
+  while (start < len && isspace((unsigned char)s[start])) {
+    start++;
+  }
+
+  if (start > 0) {
+    memmove(s, s + start, len - start + 1);
+    len -= start;
+  }
+
+  while (len > 0 && isspace((unsigned char)s[len - 1])) {
+    s[len - 1] = '\0';
+    len--;
+  }
+}
+
+static int hex_nibble(char c) {
+  if (c >= '0' && c <= '9') {
+    return c - '0';
+  }
+  if (c >= 'a' && c <= 'f') {
+    return 10 + (c - 'a');
+  }
+  if (c >= 'A' && c <= 'F') {
+    return 10 + (c - 'A');
+  }
+  return -1;
+}
+
+static int decode_hex(const char *hex, uint8_t *out, size_t out_cap,
+                      size_t *out_len) {
+  size_t hex_len;
+
+  if (!hex || !out || !out_len) {
+    return 0;
+  }
+
+  hex_len = strlen(hex);
+  if (hex_len == 0 || (hex_len % 2) != 0) {
+    return 0;
+  }
+
+  *out_len = hex_len / 2;
+  if (*out_len > out_cap) {
+    return 0;
+  }
+
+  for (size_t i = 0; i < *out_len; i++) {
+    int hi = hex_nibble(hex[i * 2]);
+    int lo = hex_nibble(hex[i * 2 + 1]);
+    if (hi < 0 || lo < 0) {
+      return 0;
+    }
+    out[i] = (uint8_t)((hi << 4) | lo);
+  }
+
+  return 1;
+}
+
+static int b64_value(char c) {
+  if (c >= 'A' && c <= 'Z') {
+    return c - 'A';
+  }
+  if (c >= 'a' && c <= 'z') {
+    return 26 + (c - 'a');
+  }
+  if (c >= '0' && c <= '9') {
+    return 52 + (c - '0');
+  }
+  if (c == '+') {
+    return 62;
+  }
+  if (c == '/') {
+    return 63;
+  }
+  return -1;
+}
+
+static int decode_base64(const char *b64, uint8_t *out, size_t out_cap,
+                         size_t *out_len) {
+  size_t in_len;
+  size_t out_pos = 0;
+
+  if (!b64 || !out || !out_len) {
+    return 0;
+  }
+
+  in_len = strlen(b64);
+  if (in_len == 0 || (in_len % 4) != 0) {
+    return 0;
+  }
+
+  for (size_t i = 0; i < in_len; i += 4) {
+    char c0 = b64[i];
+    char c1 = b64[i + 1];
+    char c2 = b64[i + 2];
+    char c3 = b64[i + 3];
+    int v0 = b64_value(c0);
+    int v1 = b64_value(c1);
+    int v2 = (c2 == '=') ? 0 : b64_value(c2);
+    int v3 = (c3 == '=') ? 0 : b64_value(c3);
+
+    if (v0 < 0 || v1 < 0 || (c2 != '=' && v2 < 0) || (c3 != '=' && v3 < 0)) {
+      return 0;
+    }
+    if (c2 == '=' && c3 != '=') {
+      return 0;
+    }
+    if ((c2 == '=' || c3 == '=') && i + 4 != in_len) {
+      return 0;
+    }
+
+    if (out_pos >= out_cap) {
+      return 0;
+    }
+    out[out_pos++] = (uint8_t)((v0 << 2) | (v1 >> 4));
+
+    if (c2 != '=') {
+      if (out_pos >= out_cap) {
+        return 0;
+      }
+      out[out_pos++] = (uint8_t)(((v1 & 0x0F) << 4) | (v2 >> 2));
+    }
+
+    if (c3 != '=') {
+      if (out_pos >= out_cap) {
+        return 0;
+      }
+      out[out_pos++] = (uint8_t)(((v2 & 0x03) << 6) | v3);
+    }
+  }
+
+  *out_len = out_pos;
+  return out_pos > 0;
+}
+
+static int parse_psk_line(const char *line, psk_client_t *out_client,
+                          char *err, size_t err_len) {
+  char work[768];
+  char *sep1;
+  char *sep2;
+  char *id;
+  char *secret;
+  char *encoding;
+  size_t id_len;
+  size_t key_len = 0;
+
+  if (!line || !out_client || !err || err_len == 0) {
+    return 0;
+  }
+
+  if (strlen(line) >= sizeof(work)) {
+    snprintf(err, err_len, "line too long");
+    return 0;
+  }
+
+  strcpy(work, line);
+  work[strcspn(work, "\r\n")] = '\0';
+  trim_in_place(work);
+
+  if (work[0] == '\0') {
+    snprintf(err, err_len, "empty line");
+    return 0;
+  }
+  if (work[0] == '#') {
+    snprintf(err, err_len, "comment line");
+    return 0;
+  }
+
+  sep1 = strchr(work, ':');
+  if (!sep1) {
+    snprintf(err, err_len, "missing field separators; expected id:secret:encoding");
+    return 0;
+  }
+  *sep1 = '\0';
+
+  sep2 = strchr(sep1 + 1, ':');
+  if (!sep2) {
+    snprintf(err, err_len, "missing encoding field; expected id:secret:encoding");
+    return 0;
+  }
+  *sep2 = '\0';
+
+  id = work;
+  secret = sep1 + 1;
+  encoding = sep2 + 1;
+
+  trim_in_place(id);
+  trim_in_place(secret);
+  trim_in_place(encoding);
+
+  if (id[0] == '\0' || secret[0] == '\0' || encoding[0] == '\0') {
+    snprintf(err, err_len, "id, secret and encoding must be non-empty");
+    return 0;
+  }
+
+  memset(out_client, 0, sizeof(*out_client));
+
+  id_len = strlen(id);
+  if (id_len >= MAX_STR_LEN) {
+    snprintf(err, err_len, "identity too long (max %d chars)", MAX_STR_LEN - 1);
+    return 0;
+  }
+  memcpy(out_client->identity, id, id_len + 1);
+
+  if (strcmp(encoding, "utf8") == 0) {
+    key_len = strlen(secret);
+    if (key_len == 0 || key_len > MAX_KEY_LEN) {
+      snprintf(err, err_len, "invalid utf8 secret length");
+      return 0;
+    }
+    memcpy(out_client->key, secret, key_len);
+  } else if (strcmp(encoding, "hex") == 0) {
+    if (!decode_hex(secret, out_client->key, sizeof(out_client->key), &key_len)) {
+      snprintf(err, err_len, "invalid hex secret");
+      return 0;
+    }
+  } else if (strcmp(encoding, "base64") == 0) {
+    if (!decode_base64(secret, out_client->key, sizeof(out_client->key), &key_len)) {
+      snprintf(err, err_len, "invalid base64 secret");
+      return 0;
+    }
+  } else {
+    snprintf(err, err_len, "unsupported encoding '%s' (use utf8, base64, or hex)",
+             encoding);
+    return 0;
+  }
+
+  out_client->key_len = key_len;
   return 1;
 }
 
@@ -358,45 +603,40 @@ static int configure_dtls_pki(coap_context_t *ctx,
 
 static void load_psk_file(const char *filename) {
   FILE *f = fopen(filename, "r");
+  size_t line_no = 0;
+
   if (!f) {
     perror("Error opening PSK file");
     exit(1);
   }
 
-  char line[256];
+  char line[768];
   while (fgets(line, sizeof(line), f)) {
-    char *sep = strchr(line, ':');
-    if (!sep) {
-      continue;
-    }
-
-    *sep = '\0';
-    char *identity = line;
-    char *key = sep + 1;
-
-    key[strcspn(key, "\r\n")] = '\0';
+    psk_client_t parsed;
+    char err[256] = {0};
+    line_no++;
 
     if (client_count >= MAX_CLIENTS) {
+      fprintf(stderr, "PSK file has too many entries (max %d)\n", MAX_CLIENTS);
       break;
     }
 
-    size_t identity_len = strlen(identity);
-    if (identity_len >= MAX_STR_LEN) {
-      identity_len = MAX_STR_LEN - 1;
+    if (!parse_psk_line(line, &parsed, err, sizeof(err))) {
+      if (strcmp(err, "empty line") == 0 || strcmp(err, "comment line") == 0) {
+        continue;
+      }
+      fprintf(stderr, "Invalid PSK entry at %s:%zu: %s\n", filename, line_no, err);
+      fclose(f);
+      exit(1);
     }
-    memcpy(clients[client_count].identity, identity, identity_len);
-    clients[client_count].identity[identity_len] = '\0';
 
-    size_t key_len = strlen(key);
-    if (key_len >= MAX_STR_LEN) {
-      key_len = MAX_STR_LEN - 1;
+    if (parsed.key_len == 0) {
+      continue;
     }
-    memcpy(clients[client_count].key, key, key_len);
-    clients[client_count].key[key_len] = '\0';
 
-    clients[client_count].key_bin.s = (const uint8_t *)clients[client_count].key;
-    clients[client_count].key_bin.length = strlen(clients[client_count].key);
-
+    clients[client_count] = parsed;
+    clients[client_count].key_bin.s = clients[client_count].key;
+    clients[client_count].key_bin.length = clients[client_count].key_len;
     client_count++;
   }
 

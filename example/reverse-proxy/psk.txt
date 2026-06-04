@@ -1,2 +1,3 @@
-alice:9yPztDNbbBkV41JIhL833lfXX+zyBfPaD8VLCK0C88w=
-bob:EiAT3eboMqOa0ddtwsiX57JUBnw08ClON7wLR7n8N2M=
+alice:9yPztDNbbBkV41JIhL833lfXX+zyBfPaD8VLCK0C88w=:base64
+bob:086123b48edc51cd5b28a9cbae07273195af0188a6187de15adae67a97f574a5:hex
+carol:musupersecretpresharedpassword:utf8

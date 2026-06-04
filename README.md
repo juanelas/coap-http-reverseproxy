@@ -46,7 +46,7 @@ Arguments / options:
 
 - `--help`, `-h`: Show command usage and exit
 - `--dtls psk|pki`: Enable DTLS; omit for plain CoAP
-- `--psk-file <path>`: PSK file path; **required** when `--dtls psk`
+- `--psk-file <path>`: PSK file path; **required** when `--dtls psk`. Each line must be `id:secret:encoding` where `encoding` is `utf8`, `base64` or `hex`.
 - `--cert <path>`: Server certificate in PEM format; **required** when `--dtls pki`
 - `--key <path>`: Server private key in PEM format; **required** when `--dtls pki`
 - `--ca <path>`: CA certificate in PEM format (optional, `--dtls pki`)
@@ -83,6 +83,14 @@ The HTTP backend URL is also accepted as a positional argument.
   coap-http-reverseproxy --dtls psk --psk-file psk.txt
   ```
 
+  PSK file example:
+
+  ```text
+  alice:9yPztDNbbBkV41JIhL833lfXX+zyBfPaD8VLCK0C88w=:base64
+  bob:086123b48edc51cd5b28a9cbae07273195af0188a6187de15adae67a97f574a5:hex
+  carol:musupersecretpresharedpassword:utf8
+  ```
+
 - Run with certificates (PKI):
 
   ```bash
@@ -100,12 +108,31 @@ The HTTP backend URL is also accepted as a positional argument.
   ```bash
   coap-http-reverseproxy --dtls psk --psk-file psk.txt --port 8684 --http-url http://127.0.0.1:3000
   ```
+## Testing
+
+You can use `coap-client-notls` or `coap-client-gnutls` to initially test the reverse proxuy operation. If not already installed, install them with:
+
+```zsh
+sudo apt update && sudo apt install libcoap3-bin
+```
+
+- Test the GET `/` endpoint without DTLS.
+
+  ```zsh
+  coap-client-notls -m get coap://127.0.0.1/
+  ```
+
+- Test the GET `/` endpoint with DTLS and valid client id and secret.
+
+  ```zsh
+  coap-client-gnutls -m get -u carol -k musupersecretpresharedpassword coaps://127.0.0.1/
+  ```
 
 ## Example usecase with an Express.js backend and a command-line SOAP client
 
-Check the example project for the following flow:
+The directory `example` holds an implementation of an HTTP API backend (Node.js express.js) running behind a CoAPs to HTTP reverse proxy, and a node client performing:
 
-1. CoAP GET request to `/hello` -> HTTP GET request to `/hello`
-2. CoAP send JSON object to POST `/data` -> HTTP POST request to `/data`
+1. A CoAP GET request to `/hello`
+2. A CoAP POST `/data` sending JSON `{ msg: "Hello I'm Alice" }`
 
-Check the example at the `example` directory.
+DTLS handshake is authenticated using a PSK between the client and the reverse proxy.

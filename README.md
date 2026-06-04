@@ -108,6 +108,7 @@ The HTTP backend URL is also accepted as a positional argument.
   ```bash
   coap-http-reverseproxy --dtls psk --psk-file psk.txt --port 8684 --http-url http://127.0.0.1:3000
   ```
+
 ## Testing
 
 You can use `coap-client-notls` or `coap-client-gnutls` to initially test the reverse proxuy operation. If not already installed, install them with:

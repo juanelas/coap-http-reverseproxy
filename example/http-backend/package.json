@@ -1,14 +1,18 @@
 {
   "name": "http-backend",
   "version": "1.0.0",
-  "description": "",
+  "description": "A simple HTTP backend example for the CoAP-HTTP reverse proxy.",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "author": {
+    "name": "Juan Hernández Serrano",
+    "email": "j.hernandez@upc.edu",
+    "url": "https://github.com/juanelas"
+  },
+  "license": "MIT",
   "type": "module",
   "dependencies": {
     "express": "^5.2.1"
